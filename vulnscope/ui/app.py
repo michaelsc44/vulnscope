@@ -1,4 +1,3 @@
-import pyperclip  # type: ignore[import-untyped]
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal
@@ -230,10 +229,11 @@ class VulnScopeApp(App):
         fix_cmd = panel.get_fix_command()
         if fix_cmd:
             try:
+                import pyperclip  # type: ignore[import-untyped]
                 pyperclip.copy(fix_cmd)
                 self.notify(f"Copied: {fix_cmd}", title="Copied to clipboard")
             except Exception:
-                self.notify(fix_cmd, title="Fix command")
+                self.notify(fix_cmd, title="Fix command (pyperclip unavailable)")
 
     def action_export_menu(self) -> None:
         self.notify("Use --json, --csv, --sarif, or --html flags for export", title="Export")
