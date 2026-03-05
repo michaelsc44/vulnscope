@@ -33,10 +33,10 @@ dependencies = [
     "packaging>=24.0",
     "platformdirs>=4.0",
     "tomli>=2.0; python_version < '3.11'",
-    "pyperclip>=1.8",
 ]
 
 [project.optional-dependencies]
+clipboard = ["pyperclip>=1.8"]
 dev = ["pytest", "pytest-asyncio", "respx", "ruff"]
 
 [project.scripts]
