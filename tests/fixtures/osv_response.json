@@ -1,0 +1,36 @@
+{
+  "results": [
+    {
+      "vulns": [
+        {
+          "id": "GHSA-j8r2-6x86-q33q",
+          "aliases": ["CVE-2023-32681"],
+          "summary": "Requests Proxy-Authorization unintentional leak",
+          "details": "Requests forwards proxy-authorization to destination servers when following HTTPS-redirected requests.",
+          "published": "2023-05-22T00:00:00Z",
+          "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:H/I:N/A:N"}],
+          "affected": [
+            {
+              "package": {"ecosystem": "PyPI", "name": "requests"},
+              "ranges": [
+                {
+                  "type": "ECOSYSTEM",
+                  "events": [
+                    {"introduced": "0"},
+                    {"fixed": "2.31.0"}
+                  ]
+                }
+              ]
+            }
+          ],
+          "references": [
+            {"url": "https://github.com/psf/requests/security/advisories/GHSA-j8r2-6x86-q33q"}
+          ]
+        }
+      ]
+    },
+    {
+      "vulns": []
+    }
+  ]
+}

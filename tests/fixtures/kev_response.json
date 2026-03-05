@@ -1,0 +1,34 @@
+{
+  "title": "CISA Known Exploited Vulnerabilities Catalog",
+  "catalogVersion": "2024.03.01",
+  "dateReleased": "2024-03-01T00:00:00Z",
+  "count": 2,
+  "vulnerabilities": [
+    {
+      "cveID": "CVE-2024-3094",
+      "vendorProject": "XZ Utils",
+      "product": "xz-utils",
+      "vulnerabilityName": "XZ Utils Supply Chain Compromise",
+      "dateAdded": "2024-04-01",
+      "shortDescription": "XZ Utils contains a supply chain compromise in liblzma.",
+      "requiredAction": "Apply mitigations per vendor instructions or discontinue use.",
+      "dueDate": "2024-04-22",
+      "knownRansomwareCampaignUse": "Unknown",
+      "notes": "",
+      "cwes": []
+    },
+    {
+      "cveID": "CVE-2024-6387",
+      "vendorProject": "OpenSSH",
+      "product": "OpenSSH",
+      "vulnerabilityName": "OpenSSH Server (sshd) Race Condition Vulnerability",
+      "dateAdded": "2024-07-01",
+      "shortDescription": "OpenSSH server contains a race condition in signal handling.",
+      "requiredAction": "Apply mitigations per vendor instructions.",
+      "dueDate": "2024-07-22",
+      "knownRansomwareCampaignUse": "Unknown",
+      "notes": "",
+      "cwes": ["CWE-364"]
+    }
+  ]
+}

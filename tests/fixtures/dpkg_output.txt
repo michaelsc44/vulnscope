@@ -1,0 +1,11 @@
+adduser	3.118ubuntu5	all	install ok installed
+apt	2.4.10	amd64	install ok installed
+base-files	12ubuntu4.4	amd64	install ok installed
+bash	5.1-6ubuntu1	amd64	install ok installed
+curl	7.81.0-1ubuntu1.16	amd64	install ok installed
+libc6	2.35-0ubuntu3.6	amd64	install ok installed
+libssl3	3.0.2-0ubuntu1.15	amd64	install ok installed
+openssl	3.0.2-0ubuntu1.15	amd64	install ok installed
+python3	3.10.6-1~22.04	amd64	install ok installed
+xz-utils	5.2.5-2ubuntu1	amd64	install ok installed
+broken-pkg	1.0	amd64	deinstall ok config-files
