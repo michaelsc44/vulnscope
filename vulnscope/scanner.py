@@ -17,6 +17,7 @@ from vulnscope.inventory.npm_packages import NpmCollector
 from vulnscope.inventory.os_info import OSInfo, get_os_info
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.rpm import RpmCollector
+from vulnscope.inventory.snap import SnapCollector
 from vulnscope.models import (
     InstalledPackage,
     ScanConfig,
@@ -151,6 +152,8 @@ async def run_scan(
         collectors.append(CargoCollector())
     if "docker" in active_ecosystems:
         collectors.append(DockerCollector(scan_contents=config.scan_docker_contents))
+    if "snap" in active_ecosystems or "snap" not in config.skip:
+        collectors.append(SnapCollector())
 
     def _run_collector(collector):
         if not collector.is_available():
@@ -211,7 +214,21 @@ async def run_scan(
         except Exception:
             pass
 
-    _progress("nvd", "NVD queries complete", 70)
+    _progress("nvd", "NVD queries complete", 67)
+
+    # Phase 5b: NVD application CPE queries (Chrome, Firefox, VS Code, etc.)
+    _progress("nvd", "Querying NVD for installed applications (Chrome, Firefox…)...", 68)
+    try:
+        nvd_app_vulns = await nvd_client.query_app_cves(
+            all_packages,
+            no_cache=config.no_cache,
+        )
+        vulnerabilities.extend(nvd_app_vulns)
+        _progress("nvd", f"NVD apps: {len(nvd_app_vulns)} application vulnerabilities found", 70)
+    except Exception:
+        pass
+
+    _progress("nvd", "NVD queries complete", 71)
 
     # Phase 6: Load CISA KEV catalog
     _progress("kev", "Loading CISA KEV catalog...", 72)

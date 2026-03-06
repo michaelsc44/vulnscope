@@ -115,6 +115,7 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
     from vulnscope.inventory.os_info import get_os_info
     from vulnscope.inventory.pip_packages import PipCollector
     from vulnscope.inventory.rpm import RpmCollector
+    from vulnscope.inventory.snap import SnapCollector
 
     console = Console()
     os_info = get_os_info()
@@ -127,6 +128,7 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
         PipCollector(),
         NpmCollector(),
         CargoCollector(),
+        SnapCollector(),
     ]
 
     table = Table(title="Installed Packages")
