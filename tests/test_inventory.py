@@ -6,6 +6,7 @@ from vulnscope.inventory.dpkg import DpkgCollector
 from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.os_info import OSInfo, _parse_os_release, get_os_info
 from vulnscope.inventory.pip_packages import PipCollector
+from vulnscope.inventory.snap import SnapCollector
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -190,3 +191,65 @@ class TestPipCollector:
             collector = PipCollector()
             assert collector.is_available() is False
             assert collector.collect() == []
+
+
+class TestSnapCollector:
+    def test_parses_fixture_output(self):
+        fixture = (FIXTURES / "snap_output.txt").read_text()
+        with patch("shutil.which", return_value="/usr/bin/snap"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = SnapCollector()
+                packages = collector.collect()
+
+        names = [p.name for p in packages]
+        assert "firefox" in names
+        assert "vlc" in names
+        assert "chromium" in names
+
+    def test_filters_base_snaps(self):
+        fixture = (FIXTURES / "snap_output.txt").read_text()
+        with patch("shutil.which", return_value="/usr/bin/snap"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = SnapCollector()
+                packages = collector.collect()
+
+        names = [p.name for p in packages]
+        assert "bare" not in names
+        assert "core22" not in names
+        assert "snapd" not in names
+        assert "gtk-common-themes" not in names
+
+    def test_correct_purl_and_ecosystem(self):
+        fixture = (FIXTURES / "snap_output.txt").read_text()
+        with patch("shutil.which", return_value="/usr/bin/snap"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = SnapCollector()
+                packages = collector.collect()
+
+        firefox = next(p for p in packages if p.name == "firefox")
+        assert firefox.purl == "pkg:snap/firefox@128.0-2"
+        assert firefox.ecosystem == "snap"
+        assert firefox.source == "snap"
+
+    def test_unavailable_returns_empty(self):
+        with patch("shutil.which", return_value=None):
+            collector = SnapCollector()
+            assert collector.is_available() is False
+            assert collector.collect() == []
+
+    def test_timeout_returns_empty(self):
+        import subprocess
+
+        with patch("shutil.which", return_value="/usr/bin/snap"):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("snap", 15)):
+                collector = SnapCollector()
+                assert collector.collect() == []
+
+    def test_file_not_found_returns_empty(self):
+        with patch("shutil.which", return_value="/usr/bin/snap"):
+            with patch("subprocess.run", side_effect=FileNotFoundError):
+                collector = SnapCollector()
+                assert collector.collect() == []

@@ -8,9 +8,15 @@ import pytest
 import respx
 
 from vulnscope.databases.cache import CacheDB
+from vulnscope.databases.cpe_map import clean_version_for_cpe, get_cpe_mapping
 from vulnscope.databases.kev import _index_catalog, load_kev_catalog
-from vulnscope.databases.nvd import NvdClient
-from vulnscope.databases.osv import query_osv_batch
+from vulnscope.databases.nvd import (
+    NVD_BASE_URL,
+    NvdClient,
+    _nvd_item_affects_version,
+    _version_in_cpe_range,
+)
+from vulnscope.databases.osv import _get_cve_id, query_osv_batch
 from vulnscope.models import InstalledPackage, Severity, Vulnerability
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -193,3 +199,254 @@ class TestNvdEnrichDedup:
         for v in result:
             assert v.severity == Severity.HIGH
             assert v.cvss_score == 7.5
+
+
+class TestGetCveId:
+    def test_extracts_cve_from_aliases(self):
+        vuln = {"id": "GHSA-abcd-1234", "aliases": ["CVE-2023-12345"]}
+        assert _get_cve_id(vuln) == "CVE-2023-12345"
+
+    def test_ubuntu_prefix_extraction(self):
+        vuln = {"id": "UBUNTU-CVE-2022-40735", "aliases": []}
+        assert _get_cve_id(vuln) == "CVE-2022-40735"
+
+    def test_debian_prefix_extraction(self):
+        vuln = {"id": "DEBIAN-CVE-2023-50387", "aliases": []}
+        assert _get_cve_id(vuln) == "CVE-2023-50387"
+
+    def test_alpine_prefix_extraction(self):
+        vuln = {"id": "ALPINE-CVE-2024-1234", "aliases": []}
+        assert _get_cve_id(vuln) == "CVE-2024-1234"
+
+    def test_aliases_preferred_over_distro_prefix(self):
+        vuln = {"id": "UBUNTU-CVE-2022-40735", "aliases": ["CVE-2022-40735"]}
+        assert _get_cve_id(vuln) == "CVE-2022-40735"
+
+    def test_falls_back_to_osv_id(self):
+        vuln = {"id": "PYSEC-2023-100", "aliases": []}
+        assert _get_cve_id(vuln) == "PYSEC-2023-100"
+
+    def test_no_aliases_key(self):
+        vuln = {"id": "GHSA-xxxx-yyyy"}
+        assert _get_cve_id(vuln) == "GHSA-xxxx-yyyy"
+
+    def test_empty_vuln(self):
+        assert _get_cve_id({}) == ""
+
+
+class TestCpeMapping:
+    def test_known_package_lookup(self):
+        assert get_cpe_mapping("google-chrome-stable") == ("google", "chrome")
+        assert get_cpe_mapping("firefox") == ("mozilla", "firefox")
+        assert get_cpe_mapping("code") == ("microsoft", "visual_studio_code")
+
+    def test_case_insensitive(self):
+        assert get_cpe_mapping("Google-Chrome-Stable") == ("google", "chrome")
+        assert get_cpe_mapping("FIREFOX") == ("mozilla", "firefox")
+
+    def test_unknown_package_returns_none(self):
+        assert get_cpe_mapping("some-unknown-package") is None
+
+    def test_clean_version_deb_suffix(self):
+        assert clean_version_for_cpe("144.0.7559.132-1", "deb") == "144.0.7559.132"
+
+    def test_clean_version_snap_suffix(self):
+        assert clean_version_for_cpe("148.0-1", "snap") == "148.0"
+
+    def test_clean_version_no_suffix(self):
+        assert clean_version_for_cpe("7.95", "snap") == "7.95"
+
+    def test_clean_version_other_ecosystem_unchanged(self):
+        assert clean_version_for_cpe("1.2.3-beta1", "pypi") == "1.2.3-beta1"
+
+
+class TestVersionInCpeRange:
+    def test_within_range_exclusive_end(self):
+        cpe_match = {"versionStartIncluding": "1.0.0", "versionEndExcluding": "2.0.0"}
+        assert _version_in_cpe_range("1.5.0", cpe_match) is True
+
+    def test_at_exclusive_end_boundary(self):
+        cpe_match = {"versionStartIncluding": "1.0.0", "versionEndExcluding": "2.0.0"}
+        assert _version_in_cpe_range("2.0.0", cpe_match) is False
+
+    def test_before_start(self):
+        cpe_match = {"versionStartIncluding": "1.0.0", "versionEndExcluding": "2.0.0"}
+        assert _version_in_cpe_range("0.9.0", cpe_match) is False
+
+    def test_inclusive_end(self):
+        cpe_match = {"versionStartIncluding": "1.0.0", "versionEndIncluding": "2.0.0"}
+        assert _version_in_cpe_range("2.0.0", cpe_match) is True
+
+    def test_no_upper_bound_returns_false(self):
+        cpe_match = {"versionStartIncluding": "1.0.0"}
+        assert _version_in_cpe_range("5.0.0", cpe_match) is False
+
+    def test_exclusive_start(self):
+        cpe_match = {"versionStartExcluding": "1.0.0", "versionEndExcluding": "2.0.0"}
+        assert _version_in_cpe_range("1.0.0", cpe_match) is False
+        assert _version_in_cpe_range("1.0.1", cpe_match) is True
+
+
+class TestNvdItemAffectsVersion:
+    def _make_nvd_item(self, vendor, product, start_incl=None, end_excl=None, end_incl=None):
+        cpe_match = {
+            "vulnerable": True,
+            "criteria": f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*",
+        }
+        if start_incl:
+            cpe_match["versionStartIncluding"] = start_incl
+        if end_excl:
+            cpe_match["versionEndExcluding"] = end_excl
+        if end_incl:
+            cpe_match["versionEndIncluding"] = end_incl
+        return {
+            "cve": {
+                "configurations": [{
+                    "nodes": [{
+                        "cpeMatch": [cpe_match]
+                    }]
+                }]
+            }
+        }
+
+    def test_affected_version(self):
+        item = self._make_nvd_item("google", "chrome", start_incl="120.0", end_excl="121.0")
+        affected, fixed = _nvd_item_affects_version(item, "120.5", "google", "chrome")
+        assert affected is True
+        assert fixed == "121.0"
+
+    def test_not_affected_after_fix(self):
+        item = self._make_nvd_item("google", "chrome", start_incl="120.0", end_excl="121.0")
+        affected, fixed = _nvd_item_affects_version(item, "121.0", "google", "chrome")
+        assert affected is False
+
+    def test_wrong_vendor_not_matched(self):
+        item = self._make_nvd_item("google", "chrome", start_incl="120.0", end_excl="121.0")
+        affected, _ = _nvd_item_affects_version(item, "120.5", "mozilla", "firefox")
+        assert affected is False
+
+
+class TestNvdQueryAppCves:
+    def _make_nvd_response(self, cve_id, vendor, product, start_incl, end_excl):
+        return {
+            "vulnerabilities": [{
+                "cve": {
+                    "id": cve_id,
+                    "descriptions": [{"lang": "en", "value": "Test vulnerability"}],
+                    "metrics": {
+                        "cvssMetricV31": [{
+                            "cvssData": {
+                                "baseScore": 8.8,
+                                "baseSeverity": "HIGH",
+                                "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+                            }
+                        }]
+                    },
+                    "weaknesses": [],
+                    "references": [],
+                    "configurations": [{
+                        "nodes": [{
+                            "cpeMatch": [{
+                                "vulnerable": True,
+                                "criteria": f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*",
+                                "versionStartIncluding": start_incl,
+                                "versionEndExcluding": end_excl,
+                            }]
+                        }]
+                    }],
+                }
+            }]
+        }
+
+    @pytest.mark.asyncio
+    async def test_query_app_cves_finds_vulnerable_package(self):
+        pkg = InstalledPackage(
+            name="google-chrome-stable", version="120.0.6099.109-1",
+            ecosystem="deb", source="dpkg", arch="amd64",
+            purl="pkg:deb/google-chrome-stable@120.0.6099.109-1",
+        )
+        nvd_response = self._make_nvd_response(
+            "CVE-2024-0001", "google", "chrome", "120.0", "121.0"
+        )
+
+        client = NvdClient()
+        with respx.mock:
+            respx.get(NVD_BASE_URL).mock(
+                return_value=httpx.Response(200, json=nvd_response)
+            )
+            result = await client.query_app_cves([pkg], no_cache=True)
+
+        assert len(result) == 1
+        assert result[0].cve_id == "CVE-2024-0001"
+        assert result[0].fixed_version == "121.0"
+
+    @pytest.mark.asyncio
+    async def test_query_app_cves_skips_unmapped_packages(self):
+        pkg = InstalledPackage(
+            name="some-random-app", version="1.0",
+            ecosystem="deb", source="dpkg", arch=None,
+            purl="pkg:deb/some-random-app@1.0",
+        )
+        client = NvdClient()
+        result = await client.query_app_cves([pkg], no_cache=True)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_query_app_cves_skips_unaffected_version(self):
+        pkg = InstalledPackage(
+            name="firefox", version="130.0",
+            ecosystem="snap", source="snap", arch=None,
+            purl="pkg:snap/firefox@130.0",
+        )
+        nvd_response = self._make_nvd_response(
+            "CVE-2024-9999", "mozilla", "firefox", "120.0", "125.0"
+        )
+
+        client = NvdClient()
+        with respx.mock:
+            respx.get(NVD_BASE_URL).mock(
+                return_value=httpx.Response(200, json=nvd_response)
+            )
+            result = await client.query_app_cves([pkg], no_cache=True)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_query_app_cves_handles_network_error(self):
+        pkg = InstalledPackage(
+            name="google-chrome-stable", version="120.0.6099.109",
+            ecosystem="deb", source="dpkg", arch=None,
+            purl="pkg:deb/google-chrome-stable@120.0.6099.109",
+        )
+        client = NvdClient()
+        with respx.mock:
+            respx.get(NVD_BASE_URL).mock(
+                side_effect=httpx.ConnectError("connection refused")
+            )
+            result = await client.query_app_cves([pkg], no_cache=True)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_query_app_cves_calls_progress_callback(self):
+        pkg = InstalledPackage(
+            name="firefox", version="120.0",
+            ecosystem="snap", source="snap", arch=None,
+            purl="pkg:snap/firefox@120.0",
+        )
+        nvd_response = self._make_nvd_response(
+            "CVE-2024-0002", "mozilla", "firefox", "119.0", "121.0"
+        )
+
+        progress_calls = []
+        client = NvdClient()
+        with respx.mock:
+            respx.get(NVD_BASE_URL).mock(
+                return_value=httpx.Response(200, json=nvd_response)
+            )
+            await client.query_app_cves(
+                [pkg], no_cache=True,
+                progress_cb=lambda cur, total: progress_calls.append((cur, total)),
+            )
+
+        assert progress_calls == [(1, 1)]
