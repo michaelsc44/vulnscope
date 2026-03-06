@@ -17,6 +17,7 @@ from vulnscope.inventory.npm_packages import NpmCollector
 from vulnscope.inventory.os_info import OSInfo, get_os_info
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.rpm import RpmCollector
+from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.snap import SnapCollector
 from vulnscope.models import (
     InstalledPackage,
@@ -154,6 +155,8 @@ async def run_scan(
         collectors.append(DockerCollector(scan_contents=config.scan_docker_contents))
     if "snap" in active_ecosystems or "snap" not in config.skip:
         collectors.append(SnapCollector())
+    if "flatpak" in active_ecosystems:
+        collectors.append(FlatpakCollector())
 
     def _run_collector(collector):
         if not collector.is_available():

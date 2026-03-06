@@ -76,7 +76,7 @@ class ScanResult:
 
 @dataclass
 class ScanConfig:
-    ecosystems: list[str] = field(default_factory=lambda: ["os", "deb", "rpm", "pypi", "npm", "cargo", "apk", "snap"])
+    ecosystems: list[str] = field(default_factory=lambda: ["os", "deb", "rpm", "pypi", "npm", "cargo", "apk", "snap", "flatpak"])
     skip: list[str] = field(default_factory=list)
     no_cache: bool = False
     scan_docker_contents: bool = False

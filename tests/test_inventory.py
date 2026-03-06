@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from vulnscope.inventory.dpkg import DpkgCollector
+from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.os_info import OSInfo, _parse_os_release, get_os_info
 from vulnscope.inventory.pip_packages import PipCollector
 
@@ -87,6 +88,59 @@ class TestDpkgCollector:
         with patch("shutil.which", return_value="/usr/bin/dpkg-query"):
             with patch("subprocess.run", side_effect=FileNotFoundError):
                 collector = DpkgCollector()
+                assert collector.collect() == []
+
+
+class TestFlatpakCollector:
+    def test_parses_flatpak_output(self):
+        fixture = (
+            "Firefox\torg.mozilla.firefox\t128.0\tstable\n"
+            "GIMP\torg.gimp.GIMP\t2.10.36\tstable\n"
+        )
+        with patch("shutil.which", return_value="/usr/bin/flatpak"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = FlatpakCollector()
+                packages = collector.collect()
+
+        names = [p.name for p in packages]
+        assert "Firefox" in names
+        assert "GIMP" in names
+        assert len(packages) == 2
+
+    def test_correct_purl_format(self):
+        fixture = "Firefox\torg.mozilla.firefox\t128.0\tstable\n"
+        with patch("shutil.which", return_value="/usr/bin/flatpak"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = FlatpakCollector()
+                packages = collector.collect()
+
+        assert len(packages) == 1
+        assert packages[0].purl == "pkg:flatpak/org.mozilla.firefox@128.0"
+        assert packages[0].ecosystem == "flatpak"
+        assert packages[0].source == "flatpak"
+
+    def test_skips_entries_without_version(self):
+        fixture = "SomeRuntime\torg.freedesktop.Platform\t\tstable\n"
+        with patch("shutil.which", return_value="/usr/bin/flatpak"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = FlatpakCollector()
+                packages = collector.collect()
+
+        assert len(packages) == 0
+
+    def test_unavailable_returns_empty(self):
+        with patch("shutil.which", return_value=None):
+            collector = FlatpakCollector()
+            assert collector.is_available() is False
+            assert collector.collect() == []
+
+    def test_subprocess_failure_returns_empty(self):
+        with patch("shutil.which", return_value="/usr/bin/flatpak"):
+            with patch("subprocess.run", side_effect=FileNotFoundError):
+                collector = FlatpakCollector()
                 assert collector.collect() == []
 
 
