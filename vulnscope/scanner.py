@@ -13,11 +13,11 @@ from vulnscope.inventory.apk import ApkCollector
 from vulnscope.inventory.cargo_packages import CargoCollector
 from vulnscope.inventory.docker_images import DockerCollector
 from vulnscope.inventory.dpkg import DpkgCollector
+from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.npm_packages import NpmCollector
 from vulnscope.inventory.os_info import OSInfo, get_os_info
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.rpm import RpmCollector
-from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.snap import SnapCollector
 from vulnscope.models import (
     InstalledPackage,

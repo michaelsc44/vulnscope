@@ -27,7 +27,7 @@ class FlatpakCollector(BaseCollector):
             parts = line.strip().split("\t")
             if len(parts) < 4:
                 continue
-            name, app_id, version, branch = parts[0], parts[1], parts[2], parts[3]
+            name, app_id, version, _ = parts[0], parts[1], parts[2], parts[3]
             if not app_id or not version:
                 continue
             purl = f"pkg:flatpak/{app_id}@{version}"
