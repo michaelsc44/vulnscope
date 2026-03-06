@@ -111,7 +111,7 @@ class TestPrintSummaryTopPackages:
         vulns = [_make_vuln(f"CVE-2024-{i:04d}", pkg_name=p) for i, p in enumerate(pkgs)]
         output = _capture_summary(_make_result(vulns))
         # Should show top 5, all have same count so order is stable from sort
-        lines_with_pkg = [l for l in output.splitlines() if any(f"pkg{i}" in l for i in range(8))]
+        lines_with_pkg = [line for line in output.splitlines() if any(f"pkg{i}" in line for i in range(8))]
         assert len(lines_with_pkg) == 5
 
 
@@ -176,6 +176,7 @@ class TestPrintSummaryActionable:
 class TestPrintSummaryCLI:
     def test_summary_only_flag_exists(self):
         from click.testing import CliRunner
+
         from vulnscope.cli import scan
         runner = CliRunner()
         result = runner.invoke(scan, ["--help"])
