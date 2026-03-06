@@ -35,6 +35,7 @@ def main(ctx: click.Context) -> None:
 )
 @click.option("--no-cache", is_flag=True, help="Bypass local cache, fetch fresh data")
 @click.option("--scan-docker-contents", is_flag=True, help="Scan packages inside Docker images")
+@click.option("--summary-only", is_flag=True, help="Show only the scan summary (no full table)")
 def scan(
     no_ui: bool,
     output_json: bool,
@@ -45,6 +46,7 @@ def scan(
     ecosystem: tuple[str, ...],
     no_cache: bool,
     scan_docker_contents: bool,
+    summary_only: bool,
 ) -> None:
     """Scan system for vulnerabilities."""
     raw_config = load_config()
@@ -58,7 +60,7 @@ def scan(
 
     from vulnscope.scanner import run_scan
 
-    non_interactive = no_ui or output_json or output_csv or sarif or bool(html_file)
+    non_interactive = no_ui or output_json or output_csv or sarif or bool(html_file) or summary_only
 
     try:
         result = asyncio.run(run_scan(config))
@@ -84,9 +86,13 @@ def scan(
         from vulnscope.export.html_export import to_html
         pathlib.Path(html_file).write_text(to_html(result))
         click.echo(f"HTML report written to {html_file}")
+    elif summary_only:
+        from vulnscope.ui.tables import print_summary
+        print_summary(result)
     elif non_interactive:
-        from vulnscope.ui.tables import print_results
+        from vulnscope.ui.tables import print_results, print_summary
         print_results(result, severity_filter=severity)
+        print_summary(result)
     else:
         from vulnscope.ui.app import VulnScopeApp
         app = VulnScopeApp(result)
