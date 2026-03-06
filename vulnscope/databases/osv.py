@@ -51,9 +51,15 @@ def _extract_cvss(osv_vuln: dict) -> tuple[float | None, str | None]:
 
 def _get_cve_id(osv_vuln: dict) -> str:
     osv_id = osv_vuln.get("id", "")
-    for alias in osv_vuln.get("aliases", []):
+    for alias in (osv_vuln.get("aliases") or []):
         if alias.startswith("CVE-"):
             return alias
+    # Distro-prefixed IDs embed the CVE: UBUNTU-CVE-2022-40735, DEBIAN-CVE-2022-...
+    for prefix in ("UBUNTU-CVE-", "DEBIAN-CVE-", "ALPINE-CVE-", "RHSA-"):
+        if osv_id.upper().startswith(prefix):
+            candidate = osv_id[len(prefix) - len("CVE-"):]
+            if candidate.startswith("CVE-"):
+                return candidate
     return osv_id
 
 
@@ -67,24 +73,26 @@ def _get_fixed_version(affected: list[dict]) -> str | None:
 
 
 def _parse_osv_vuln(osv_vuln: dict, package: InstalledPackage) -> Vulnerability | None:
-    affected = osv_vuln.get("affected", [])
-    if not affected:
-        return None
+    # OSV already filters by versioned PURL server-side, so an empty `affected`
+    # array (common in batch API responses for e.g. UBUNTU-CVE advisories) just
+    # means the detail was omitted — the vuln still applies to this package.
+    affected = osv_vuln.get("affected") or []
 
-    ranges_list = []
-    for entry in affected:
-        ranges_list.extend(entry.get("ranges", []))
-        versions = entry.get("versions", [])
-        if versions:
-            ranges_list.append({"type": "EXACT", "versions": versions})
+    if affected:
+        ranges_list = []
+        for entry in affected:
+            ranges_list.extend(entry.get("ranges", []))
+            versions = entry.get("versions", [])
+            if versions:
+                ranges_list.append({"type": "EXACT", "versions": versions})
 
-    if ranges_list and not is_affected(package.version, ranges_list, package.ecosystem):
-        return None
+        if ranges_list and not is_affected(package.version, ranges_list, package.ecosystem):
+            return None
 
     cvss_score, cvss_vector = _extract_cvss(osv_vuln)
     severity = _parse_severity(osv_vuln.get("severity"), cvss_score)
     cve_id = _get_cve_id(osv_vuln)
-    aliases = [a for a in osv_vuln.get("aliases", []) if a != cve_id]
+    aliases = [a for a in (osv_vuln.get("aliases") or []) if a != cve_id]
 
     refs = [r.get("url", "") for r in osv_vuln.get("references", []) if r.get("url")]
 
