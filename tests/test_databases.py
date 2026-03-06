@@ -1,7 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -178,7 +178,6 @@ class TestNvdEnrichDedup:
         }
 
         call_count = 0
-        original_get_cve = NvdClient.get_cve
 
         async def mock_get_cve(self, cve_id, no_cache=False):
             nonlocal call_count
