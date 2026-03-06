@@ -271,26 +271,41 @@ class NvdClient:
         vulnerabilities: list[Vulnerability],
         no_cache: bool = False,
     ) -> list[Vulnerability]:
-        """Fetch NVD detail for CRITICAL/HIGH/UNKNOWN vulns to get accurate CVSS vectors."""
-        high_vulns = [
+        """Fetch NVD detail for CRITICAL/HIGH/UNKNOWN vulns to get accurate CVSS vectors.
+
+        Deduplicates CVE IDs so each unique CVE is fetched only once, even when
+        many packages share the same CVE (common with deb/distro advisories).
+        """
+        candidates = [
             v
             for v in vulnerabilities
             if v.severity in (Severity.CRITICAL, Severity.HIGH, Severity.UNKNOWN)
             and v.cve_id.startswith("CVE-")
-            and v.source != "nvd"  # already have NVD data
+            and v.source != "nvd"
         ]
-        if not high_vulns:
+        if not candidates:
             return vulnerabilities
 
-        tasks = [self.get_cve(v.cve_id, no_cache=no_cache) for v in high_vulns]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Deduplicate: only fetch each unique CVE ID once
+        unique_cve_ids = list({v.cve_id for v in candidates})
 
+        # Fetch unique CVEs sequentially in small batches to respect rate limits
         enriched_map: dict[str, dict] = {}
-        for vuln, result in zip(high_vulns, results):
-            if isinstance(result, dict) and result:
-                items = result.get("vulnerabilities", [])
-                if items:
-                    enriched_map[vuln.cve_id] = items[0]
+        batch_size = 5 if not self.api_key else 40
+        for i in range(0, len(unique_cve_ids), batch_size):
+            batch = unique_cve_ids[i : i + batch_size]
+            tasks = [self.get_cve(cve_id, no_cache=no_cache) for cve_id in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for cve_id, result in zip(batch, results):
+                if isinstance(result, dict) and result:
+                    items = result.get("vulnerabilities", [])
+                    if items:
+                        enriched_map[cve_id] = items[0]
+
+            # Rate-limit pause between batches
+            if i + batch_size < len(unique_cve_ids):
+                await asyncio.sleep(6.0 if not self.api_key else 0.6)
 
         updated = []
         for v in vulnerabilities:
