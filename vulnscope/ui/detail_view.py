@@ -14,11 +14,15 @@ SEVERITY_COLORS = {
 def _fix_command(vuln: Vulnerability) -> str | None:
     pkg = vuln.affected_package
     fixed = vuln.fixed_version
-    if not fixed:
-        return None
     eco = pkg.ecosystem
     if eco == "deb":
-        return f"sudo apt install {pkg.name}={fixed}"
+        if fixed:
+            return f"sudo apt install --only-upgrade {pkg.name}"
+        return f"sudo apt install --only-upgrade {pkg.name}"
+    if eco == "snap":
+        return f"sudo snap refresh {pkg.name}"
+    if not fixed:
+        return None
     if eco == "rpm":
         return f"sudo dnf update {pkg.name}"
     if eco == "pypi":

@@ -46,7 +46,7 @@ def build_scan_config(
     cache_section = raw.get("cache", {})
 
     return ScanConfig(
-        ecosystems=ecosystems or scan_section.get("ecosystems", ["os", "deb", "rpm", "pypi", "npm", "cargo", "apk"]),
+        ecosystems=ecosystems or scan_section.get("ecosystems", ["os", "deb", "rpm", "pypi", "npm", "cargo", "apk", "snap"]),
         skip=skip or scan_section.get("skip", []),
         no_cache=no_cache,
         scan_docker_contents=scan_docker_contents or scan_section.get("docker_contents", False),
