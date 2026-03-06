@@ -242,8 +242,10 @@ async def run_scan(
     _progress("enrich", "Cross-referencing KEV...", 80)
     vulnerabilities = _enrich_with_kev(vulnerabilities, kev_catalog)
 
-    # Phase 8: NVD enrichment for CRITICAL/HIGH
-    _progress("enrich", "Enriching critical/high CVEs with NVD CVSS data...", 83)
+    # Phase 8: NVD enrichment for CRITICAL/HIGH/UNKNOWN severity
+    unknown_count = sum(1 for v in vulnerabilities if v.severity == Severity.UNKNOWN and v.cve_id.startswith("CVE-"))
+    unique_cves = len({v.cve_id for v in vulnerabilities if v.severity in (Severity.CRITICAL, Severity.HIGH, Severity.UNKNOWN) and v.cve_id.startswith("CVE-") and v.source != "nvd"})
+    _progress("enrich", f"Enriching {unique_cves} unique CVEs ({unknown_count} UNKNOWN severity)...", 83)
     try:
         vulnerabilities = await nvd_client.enrich_vulnerabilities(
             vulnerabilities,

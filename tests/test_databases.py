@@ -1,6 +1,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -8,8 +9,9 @@ import respx
 
 from vulnscope.databases.cache import CacheDB
 from vulnscope.databases.kev import _index_catalog, load_kev_catalog
+from vulnscope.databases.nvd import NvdClient
 from vulnscope.databases.osv import query_osv_batch
-from vulnscope.models import InstalledPackage
+from vulnscope.models import InstalledPackage, Severity, Vulnerability
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -131,3 +133,63 @@ class TestOsvBatchQuery:
 
             result = await query_osv_batch([pkg], cache=cache, no_cache=False)
             assert len(result) >= 1
+
+
+def _make_vuln(cve_id: str, pkg_name: str, severity: Severity = Severity.UNKNOWN) -> Vulnerability:
+    pkg = make_package(pkg_name, "1.0.0", "deb")
+    return Vulnerability(
+        cve_id=cve_id, aliases=[], title=cve_id, description="",
+        severity=severity, cvss_score=None, cvss_vector=None, cwe_ids=[],
+        affected_package=pkg, fixed_version=None, is_known_exploited=False,
+        kev_due_date=None, references=[], published_date=None, source="osv",
+    )
+
+
+class TestNvdEnrichDedup:
+    """Verify that enrich_vulnerabilities deduplicates CVE lookups."""
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_cve_lookups(self):
+        """When 5 vulns share 2 CVE IDs, only 2 API calls should be made."""
+        vulns = [
+            _make_vuln("CVE-2024-1111", "libssl3"),
+            _make_vuln("CVE-2024-1111", "openssl"),
+            _make_vuln("CVE-2024-1111", "libssl-dev"),
+            _make_vuln("CVE-2024-2222", "curl"),
+            _make_vuln("CVE-2024-2222", "libcurl4"),
+        ]
+
+        nvd_response = {
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "placeholder",
+                    "metrics": {
+                        "cvssMetricV31": [{
+                            "cvssData": {
+                                "baseScore": 7.5,
+                                "baseSeverity": "HIGH",
+                                "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                            }
+                        }]
+                    },
+                    "weaknesses": [],
+                }
+            }]
+        }
+
+        call_count = 0
+
+        async def mock_get_cve(self, cve_id, no_cache=False):
+            nonlocal call_count
+            call_count += 1
+            return nvd_response
+
+        client = NvdClient()
+        with patch.object(NvdClient, "get_cve", mock_get_cve):
+            result = await client.enrich_vulnerabilities(vulns, no_cache=True)
+
+        assert call_count == 2, f"Expected 2 API calls for 2 unique CVEs, got {call_count}"
+        # All 5 vulns should be enriched with HIGH severity
+        for v in result:
+            assert v.severity == Severity.HIGH
+            assert v.cvss_score == 7.5
