@@ -271,11 +271,11 @@ class NvdClient:
         vulnerabilities: list[Vulnerability],
         no_cache: bool = False,
     ) -> list[Vulnerability]:
-        """Fetch NVD detail for CRITICAL/HIGH vulns to get accurate CVSS vectors."""
+        """Fetch NVD detail for CRITICAL/HIGH/UNKNOWN vulns to get accurate CVSS vectors."""
         high_vulns = [
             v
             for v in vulnerabilities
-            if v.severity in (Severity.CRITICAL, Severity.HIGH)
+            if v.severity in (Severity.CRITICAL, Severity.HIGH, Severity.UNKNOWN)
             and v.cve_id.startswith("CVE-")
             and v.source != "nvd"  # already have NVD data
         ]
