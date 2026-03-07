@@ -1,5 +1,8 @@
 import asyncio
+import os
+import signal
 import sys
+import time
 
 import click
 
@@ -179,12 +182,127 @@ def cache_clear() -> None:
 @cache.command("info")
 def cache_info() -> None:
     """Show cache location and size."""
-    import os
+    import os as _os
 
     from vulnscope.config import CACHE_DB
     if CACHE_DB.exists():
-        size = os.path.getsize(CACHE_DB)
+        size = _os.path.getsize(CACHE_DB)
         click.echo(f"Cache location: {CACHE_DB}")
         click.echo(f"Cache size: {size / 1024:.1f} KB")
     else:
         click.echo(f"Cache location: {CACHE_DB} (not yet created)")
+
+
+@main.group()
+def watch() -> None:
+    """Background watch mode — periodic scans with desktop notifications."""
+
+
+def _pid_file():
+    from vulnscope.scan_store import DATA_DIR
+    return DATA_DIR / "watch.pid"
+
+
+def _read_pid() -> int | None:
+    pf = _pid_file()
+    if not pf.exists():
+        return None
+    try:
+        pid = int(pf.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        pf.unlink(missing_ok=True)
+        return None
+
+
+@watch.command("start")
+@click.option("--interval", default=360, type=int, help="Scan interval in minutes (default: 360 = 6 hours)")
+@click.option("--foreground", is_flag=True, help="Run in foreground instead of daemonizing")
+def watch_start(interval: int, foreground: bool) -> None:
+    """Start periodic background scanning."""
+    existing = _read_pid()
+    if existing:
+        click.echo(f"Watch daemon already running (PID {existing}). Use 'vulnscope watch stop' first.")
+        sys.exit(1)
+
+    if not foreground:
+        try:
+            pid = os.fork()
+        except OSError as exc:
+            click.echo(f"Failed to daemonize: {exc}", err=True)
+            sys.exit(1)
+        if pid > 0:
+            click.echo(f"Watch daemon started (PID {pid}), scanning every {interval} minutes.")
+            return
+        os.setsid()
+        sys.stdin = open(os.devnull)
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+
+    pf = _pid_file()
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    pf.write_text(str(os.getpid()))
+
+    def _cleanup(*_args):
+        pf.unlink(missing_ok=True)
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _cleanup)
+    signal.signal(signal.SIGINT, _cleanup)
+
+    try:
+        _watch_loop(interval)
+    finally:
+        pf.unlink(missing_ok=True)
+
+
+def _watch_loop(interval_minutes: int) -> None:
+    from vulnscope.notify import send_notification
+    from vulnscope.scan_store import diff_scans, load_latest_scan, save_scan
+    from vulnscope.scanner import run_scan
+
+    raw_config = load_config()
+    config = build_scan_config(raw_config)
+
+    while True:
+        previous = load_latest_scan()
+        try:
+            result = asyncio.run(run_scan(config))
+        except Exception:
+            time.sleep(interval_minutes * 60)
+            continue
+
+        save_scan(result)
+
+        if previous:
+            new_vulns = diff_scans(previous, result)
+            if new_vulns:
+                send_notification(new_vulns)
+
+        time.sleep(interval_minutes * 60)
+
+
+@watch.command("stop")
+def watch_stop() -> None:
+    """Stop the watch daemon."""
+    pid = _read_pid()
+    if not pid:
+        click.echo("No watch daemon is running.")
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        click.echo(f"Watch daemon (PID {pid}) stopped.")
+    except ProcessLookupError:
+        click.echo("Watch daemon process not found (stale PID file removed).")
+    _pid_file().unlink(missing_ok=True)
+
+
+@watch.command("status")
+def watch_status() -> None:
+    """Check if the watch daemon is running."""
+    pid = _read_pid()
+    if pid:
+        click.echo(f"Watch daemon is running (PID {pid}).")
+    else:
+        click.echo("Watch daemon is not running.")
