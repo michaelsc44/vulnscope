@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,7 +38,61 @@ def _parse_os_release(content: str) -> dict[str, str]:
     return result
 
 
+def _get_macos_info() -> dict[str, str]:
+    info: dict[str, str] = {}
+    for key, flag in [
+        ("productName", "-productName"),
+        ("productVersion", "-productVersion"),
+        ("buildVersion", "-buildVersion"),
+    ]:
+        try:
+            result = subprocess.run(
+                ["sw_vers", flag], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                info[key] = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+    return info
+
+
 def get_os_info() -> OSInfo:
+    if sys.platform == "darwin":
+        mac = _get_macos_info()
+        product_name = mac.get("productName", "macOS")
+        product_version = mac.get("productVersion", "unknown")
+        build_version = mac.get("buildVersion", "")
+
+        kernel_version = "unknown"
+        try:
+            result = subprocess.run(
+                ["uname", "-r"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                kernel_version = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        arch = "unknown"
+        try:
+            result = subprocess.run(
+                ["uname", "-m"], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                arch = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        return OSInfo(
+            id="macos",
+            name=product_name,
+            version=product_version,
+            version_codename=build_version,
+            pretty_name=f"{product_name} {product_version}",
+            kernel_version=kernel_version,
+            arch=arch,
+        )
+
     os_release: dict[str, str] = {}
 
     for path in ["/etc/os-release", "/usr/lib/os-release"]:

@@ -5,7 +5,12 @@ from unittest.mock import MagicMock, patch
 from vulnscope.inventory.brew import BrewCollector
 from vulnscope.inventory.dpkg import DpkgCollector
 from vulnscope.inventory.flatpak import FlatpakCollector
-from vulnscope.inventory.os_info import OSInfo, _parse_os_release, get_os_info
+from vulnscope.inventory.os_info import (
+    OSInfo,
+    _get_macos_info,
+    _parse_os_release,
+    get_os_info,
+)
 from vulnscope.inventory.pacman import PacmanCollector
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.snap import SnapCollector
@@ -51,6 +56,73 @@ VERSION_CODENAME=jammy
                 info = get_os_info()
                 assert isinstance(info, OSInfo)
                 assert info.id == "ubuntu"
+
+
+class TestMacOSDetection:
+    def test_get_macos_info_parses_sw_vers(self):
+        sw_vers_outputs = {
+            "-productName": "macOS",
+            "-productVersion": "14.3.1",
+            "-buildVersion": "23D60",
+        }
+
+        def fake_run(cmd, **kwargs):
+            flag = cmd[1]
+            return MagicMock(returncode=0, stdout=sw_vers_outputs[flag] + "\n")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            info = _get_macos_info()
+            assert info["productName"] == "macOS"
+            assert info["productVersion"] == "14.3.1"
+            assert info["buildVersion"] == "23D60"
+
+    def test_get_macos_info_handles_missing_sw_vers(self):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            info = _get_macos_info()
+            assert info == {}
+
+    def test_get_os_info_darwin(self):
+        sw_vers_outputs = {
+            "-productName": "macOS",
+            "-productVersion": "14.3.1",
+            "-buildVersion": "23D60",
+        }
+
+        def fake_run(cmd, **kwargs):
+            if cmd[0] == "sw_vers":
+                flag = cmd[1]
+                return MagicMock(returncode=0, stdout=sw_vers_outputs[flag] + "\n")
+            if cmd == ["uname", "-r"]:
+                return MagicMock(returncode=0, stdout="23.3.0\n")
+            if cmd == ["uname", "-m"]:
+                return MagicMock(returncode=0, stdout="arm64\n")
+            return MagicMock(returncode=1, stdout="")
+
+        with patch("vulnscope.inventory.os_info.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            with patch("subprocess.run", side_effect=fake_run):
+                info = get_os_info()
+                assert info.id == "macos"
+                assert info.name == "macOS"
+                assert info.version == "14.3.1"
+                assert info.version_codename == "23D60"
+                assert info.pretty_name == "macOS 14.3.1"
+                assert info.kernel_version == "23.3.0"
+                assert info.arch == "arm64"
+
+    def test_get_os_info_non_darwin_falls_through(self):
+        with patch("vulnscope.inventory.os_info.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0, stdout="6.5.0-44-generic\n"
+                )
+                with patch("pathlib.Path.exists", return_value=True), patch(
+                    "pathlib.Path.read_text",
+                    return_value='ID=ubuntu\nNAME="Ubuntu"\nVERSION_ID="22.04"\nPRETTY_NAME="Ubuntu 22.04 LTS"\nVERSION_CODENAME=jammy\n',
+                ):
+                    info = get_os_info()
+                    assert info.id == "ubuntu"
 
 
 class TestDpkgCollector:
