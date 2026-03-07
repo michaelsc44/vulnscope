@@ -115,10 +115,12 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
     from rich.table import Table
 
     from vulnscope.inventory.apk import ApkCollector
+    from vulnscope.inventory.brew import BrewCollector
     from vulnscope.inventory.cargo_packages import CargoCollector
     from vulnscope.inventory.dpkg import DpkgCollector
     from vulnscope.inventory.npm_packages import NpmCollector
     from vulnscope.inventory.os_info import get_os_info
+    from vulnscope.inventory.pacman import PacmanCollector
     from vulnscope.inventory.pip_packages import PipCollector
     from vulnscope.inventory.rpm import RpmCollector
     from vulnscope.inventory.snap import SnapCollector
@@ -135,6 +137,8 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
         NpmCollector(),
         CargoCollector(),
         SnapCollector(),
+        PacmanCollector(),
+        BrewCollector(),
     ]
 
     table = Table(title="Installed Packages")

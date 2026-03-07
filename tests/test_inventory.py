@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from vulnscope.inventory.brew import BrewCollector
 from vulnscope.inventory.dpkg import DpkgCollector
 from vulnscope.inventory.flatpak import FlatpakCollector
 from vulnscope.inventory.os_info import OSInfo, _parse_os_release, get_os_info
+from vulnscope.inventory.pacman import PacmanCollector
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.snap import SnapCollector
 
@@ -252,4 +254,107 @@ class TestSnapCollector:
         with patch("shutil.which", return_value="/usr/bin/snap"):
             with patch("subprocess.run", side_effect=FileNotFoundError):
                 collector = SnapCollector()
+                assert collector.collect() == []
+
+
+class TestPacmanCollector:
+    def test_parses_pacman_output(self):
+        fixture = "linux 6.7.4.arch1-1\nbash 5.2.026-2\nopenssl 3.2.1-1\n"
+        with patch("shutil.which", return_value="/usr/bin/pacman"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = PacmanCollector()
+                packages = collector.collect()
+
+        names = [p.name for p in packages]
+        assert "linux" in names
+        assert "bash" in names
+        assert "openssl" in names
+        assert len(packages) == 3
+
+    def test_correct_purl_format(self):
+        fixture = "openssl 3.2.1-1\n"
+        with patch("shutil.which", return_value="/usr/bin/pacman"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = PacmanCollector()
+                packages = collector.collect()
+
+        assert len(packages) == 1
+        assert packages[0].purl == "pkg:pacman/arch/openssl@3.2.1-1"
+        assert packages[0].ecosystem == "pacman"
+        assert packages[0].source == "pacman"
+
+    def test_unavailable_returns_empty(self):
+        with patch("shutil.which", return_value=None):
+            collector = PacmanCollector()
+            assert collector.is_available() is False
+            assert collector.collect() == []
+
+    def test_subprocess_failure_returns_empty(self):
+        with patch("shutil.which", return_value="/usr/bin/pacman"):
+            with patch("subprocess.run", side_effect=FileNotFoundError):
+                collector = PacmanCollector()
+                assert collector.collect() == []
+
+    def test_skips_malformed_lines(self):
+        fixture = "openssl 3.2.1-1\nbadline\n\n"
+        with patch("shutil.which", return_value="/usr/bin/pacman"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = PacmanCollector()
+                packages = collector.collect()
+
+        assert len(packages) == 1
+        assert packages[0].name == "openssl"
+
+
+class TestBrewCollector:
+    def test_parses_formulae_output(self):
+        formulae_output = "openssl@3 3.2.1\nwget 1.21.4\n"
+        with patch("shutil.which", return_value="/usr/local/bin/brew"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=formulae_output)
+                collector = BrewCollector()
+                packages = collector.collect()
+
+        names = [p.name for p in packages]
+        assert "openssl@3" in names
+        assert "wget" in names
+
+    def test_correct_purl_format(self):
+        formulae_output = "wget 1.21.4\n"
+        with patch("shutil.which", return_value="/usr/local/bin/brew"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=formulae_output)
+                collector = BrewCollector()
+                # Only test _run_and_parse directly for purl check
+                packages = collector._run_and_parse(["brew", "list", "--versions"])
+
+        assert len(packages) == 1
+        assert packages[0].purl == "pkg:brew/wget@1.21.4"
+        assert packages[0].ecosystem == "brew"
+        assert packages[0].source == "brew"
+
+    def test_picks_last_version_when_multiple(self):
+        fixture = "python@3.11 3.11.7 3.11.8\n"
+        with patch("shutil.which", return_value="/usr/local/bin/brew"):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout=fixture)
+                collector = BrewCollector()
+                packages = collector._run_and_parse(["brew", "list", "--versions"])
+
+        assert len(packages) == 1
+        assert packages[0].version == "3.11.8"
+
+    def test_unavailable_returns_empty(self):
+        with patch("shutil.which", return_value=None):
+            collector = BrewCollector()
+            assert collector.is_available() is False
+            assert collector.collect() == []
+
+    def test_subprocess_failure_returns_empty(self):
+        with patch("shutil.which", return_value="/usr/local/bin/brew"):
+            with patch("subprocess.run", side_effect=FileNotFoundError):
+                collector = BrewCollector()
                 assert collector.collect() == []
