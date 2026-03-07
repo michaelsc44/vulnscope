@@ -16,7 +16,7 @@ from vulnscope.databases.nvd import (
     _nvd_item_affects_version,
     _version_in_cpe_range,
 )
-from vulnscope.databases.osv import _get_cve_id, query_osv_batch
+from vulnscope.databases.osv import _get_cve_id, _parse_severity, query_osv_batch
 from vulnscope.models import InstalledPackage, Severity, Vulnerability
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -450,3 +450,73 @@ class TestNvdQueryAppCves:
             )
 
         assert progress_calls == [(1, 1)]
+
+
+class TestParseSeverity:
+    def test_cvss_score_critical(self):
+        assert _parse_severity({}, 9.8) == Severity.CRITICAL
+
+    def test_cvss_score_high(self):
+        assert _parse_severity({}, 7.5) == Severity.HIGH
+
+    def test_cvss_score_medium(self):
+        assert _parse_severity({}, 5.0) == Severity.MEDIUM
+
+    def test_cvss_score_low(self):
+        assert _parse_severity({}, 2.0) == Severity.LOW
+
+    def test_database_specific_severity(self):
+        vuln = {"database_specific": {"severity": "HIGH"}}
+        assert _parse_severity(vuln, None) == Severity.HIGH
+
+    def test_database_specific_moderate_maps_to_medium(self):
+        vuln = {"database_specific": {"severity": "MODERATE"}}
+        assert _parse_severity(vuln, None) == Severity.MEDIUM
+
+    def test_database_specific_case_insensitive(self):
+        vuln = {"database_specific": {"severity": "critical"}}
+        assert _parse_severity(vuln, None) == Severity.CRITICAL
+
+    def test_ecosystem_specific_urgency(self):
+        vuln = {
+            "affected": [
+                {"ecosystem_specific": {"urgency": "medium"}}
+            ],
+        }
+        assert _parse_severity(vuln, None) == Severity.MEDIUM
+
+    def test_ecosystem_specific_urgency_negligible(self):
+        vuln = {
+            "affected": [
+                {"ecosystem_specific": {"urgency": "negligible"}}
+            ],
+        }
+        assert _parse_severity(vuln, None) == Severity.LOW
+
+    def test_ecosystem_specific_severity_field(self):
+        vuln = {
+            "affected": [
+                {"ecosystem_specific": {"severity": "HIGH"}}
+            ],
+        }
+        assert _parse_severity(vuln, None) == Severity.HIGH
+
+    def test_cvss_score_takes_priority(self):
+        vuln = {"database_specific": {"severity": "LOW"}}
+        assert _parse_severity(vuln, 9.5) == Severity.CRITICAL
+
+    def test_database_specific_over_ecosystem_specific(self):
+        vuln = {
+            "database_specific": {"severity": "CRITICAL"},
+            "affected": [
+                {"ecosystem_specific": {"urgency": "low"}}
+            ],
+        }
+        assert _parse_severity(vuln, None) == Severity.CRITICAL
+
+    def test_no_severity_info_returns_unknown(self):
+        assert _parse_severity({}, None) == Severity.UNKNOWN
+
+    def test_empty_database_specific(self):
+        vuln = {"database_specific": {}}
+        assert _parse_severity(vuln, None) == Severity.UNKNOWN

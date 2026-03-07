@@ -11,27 +11,66 @@ OSV_BATCH_URL = "https://api.osv.dev/v1/querybatch"
 BATCH_SIZE = 1000
 
 
-def _parse_severity(osv_severity: list[dict] | None, cvss_score: float | None) -> Severity:
-    if osv_severity:
-        for sev in osv_severity:
-            score_str = sev.get("score", "")
-            if "CRITICAL" in score_str.upper():
-                return Severity.CRITICAL
-            if "HIGH" in score_str.upper():
-                return Severity.HIGH
-            if "MEDIUM" in score_str.upper():
-                return Severity.MEDIUM
-            if "LOW" in score_str.upper():
-                return Severity.LOW
+_SEVERITY_TEXT_MAP: dict[str, Severity] = {
+    "CRITICAL": Severity.CRITICAL,
+    "HIGH": Severity.HIGH,
+    "MEDIUM": Severity.MEDIUM,
+    "MODERATE": Severity.MEDIUM,
+    "LOW": Severity.LOW,
+    "NEGLIGIBLE": Severity.LOW,
+}
+
+
+def _score_to_severity(score: float) -> Severity:
+    if score >= 9.0:
+        return Severity.CRITICAL
+    if score >= 7.0:
+        return Severity.HIGH
+    if score >= 4.0:
+        return Severity.MEDIUM
+    if score > 0.0:
+        return Severity.LOW
+    return Severity.UNKNOWN
+
+
+def _parse_severity(osv_vuln: dict, cvss_score: float | None) -> Severity:
+    # 1. Numeric CVSS score (most reliable when available)
     if cvss_score is not None:
-        if cvss_score >= 9.0:
-            return Severity.CRITICAL
-        if cvss_score >= 7.0:
-            return Severity.HIGH
-        if cvss_score >= 4.0:
-            return Severity.MEDIUM
-        if cvss_score > 0.0:
-            return Severity.LOW
+        return _score_to_severity(cvss_score)
+
+    # 2. Check database_specific.severity (GHSA advisories use this)
+    db_specific = osv_vuln.get("database_specific", {})
+    if isinstance(db_specific, dict):
+        db_sev = db_specific.get("severity", "")
+        if isinstance(db_sev, str):
+            mapped = _SEVERITY_TEXT_MAP.get(db_sev.upper())
+            if mapped:
+                return mapped
+
+    # 3. Check affected[].ecosystem_specific for urgency (Ubuntu/Debian)
+    for affected in osv_vuln.get("affected", []):
+        eco_specific = affected.get("ecosystem_specific", {})
+        if isinstance(eco_specific, dict):
+            urgency = eco_specific.get("urgency", "")
+            if isinstance(urgency, str):
+                mapped = _SEVERITY_TEXT_MAP.get(urgency.upper())
+                if mapped:
+                    return mapped
+            # Some ecosystems use "severity" in ecosystem_specific
+            eco_sev = eco_specific.get("severity", "")
+            if isinstance(eco_sev, str):
+                mapped = _SEVERITY_TEXT_MAP.get(eco_sev.upper())
+                if mapped:
+                    return mapped
+
+    # 4. Try text labels in the severity array (fallback)
+    for sev in osv_vuln.get("severity", []):
+        score_str = sev.get("score", "")
+        upper = score_str.upper()
+        for label, severity_val in _SEVERITY_TEXT_MAP.items():
+            if label in upper:
+                return severity_val
+
     return Severity.UNKNOWN
 
 
@@ -90,7 +129,7 @@ def _parse_osv_vuln(osv_vuln: dict, package: InstalledPackage) -> Vulnerability 
             return None
 
     cvss_score, cvss_vector = _extract_cvss(osv_vuln)
-    severity = _parse_severity(osv_vuln.get("severity"), cvss_score)
+    severity = _parse_severity(osv_vuln, cvss_score)
     cve_id = _get_cve_id(osv_vuln)
     aliases = [a for a in (osv_vuln.get("aliases") or []) if a != cve_id]
 
