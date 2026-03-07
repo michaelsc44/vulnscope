@@ -167,6 +167,67 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
     console.print(f"\n[bold]Total: {total} packages[/bold]")
 
 
+@main.command()
+@click.option("--apply", is_flag=True, help="Actually run update commands (default is dry-run)")
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be updated (default behavior)")
+@click.option("--skip-reboot", is_flag=True, help="Skip updates that require a reboot")
+@click.option(
+    "--ecosystem",
+    multiple=True,
+    help="Filter to specific ecosystem (deb, snap, flatpak, pypi, npm, cargo, brew)",
+)
+def fix(apply: bool, dry_run: bool, skip_reboot: bool, ecosystem: tuple[str, ...]) -> None:
+    """Auto-remediate vulnerabilities by updating packages."""
+    from vulnscope.remediate import (
+        apply_remediations,
+        build_remediations,
+        print_remediation_table,
+        print_results_table,
+    )
+
+    raw_config = load_config()
+    config = build_scan_config(raw_config)
+
+    from vulnscope.scanner import run_scan
+
+    click.echo("Scanning for fixable vulnerabilities...")
+    try:
+        result = asyncio.run(run_scan(config))
+    except KeyboardInterrupt:
+        click.echo("\nScan cancelled.", err=True)
+        sys.exit(2)
+    except Exception as e:
+        click.echo(f"Scan error: {e}", err=True)
+        sys.exit(2)
+
+    remediations = build_remediations(result)
+
+    if ecosystem:
+        eco_set = set(ecosystem)
+        remediations = [r for r in remediations if r.ecosystem in eco_set]
+
+    if skip_reboot:
+        remediations = [r for r in remediations if not r.requires_reboot]
+
+    if not apply:
+        print_remediation_table(remediations, dry_run=True)
+        if remediations:
+            click.echo("\nRun with --apply to execute these updates.")
+        sys.exit(0)
+
+    print_remediation_table(remediations, dry_run=False)
+    if not remediations:
+        sys.exit(0)
+
+    results = apply_remediations(remediations)
+    print_results_table(results)
+
+    failures = [r for r in results if not r.success]
+    if failures:
+        sys.exit(1)
+    sys.exit(0)
+
+
 @main.group()
 def cache() -> None:
     """Manage local vulnerability cache."""
