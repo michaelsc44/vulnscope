@@ -4,7 +4,12 @@ from unittest.mock import MagicMock, patch
 
 from vulnscope.inventory.dpkg import DpkgCollector
 from vulnscope.inventory.flatpak import FlatpakCollector
-from vulnscope.inventory.os_info import OSInfo, _parse_os_release, get_os_info
+from vulnscope.inventory.os_info import (
+    OSInfo,
+    _get_macos_info,
+    _parse_os_release,
+    get_os_info,
+)
 from vulnscope.inventory.pip_packages import PipCollector
 from vulnscope.inventory.snap import SnapCollector
 
@@ -40,15 +45,108 @@ VERSION_CODENAME=jammy
         assert result["ID"] == "fedora"
 
     def test_get_os_info_returns_osinfo(self):
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="6.5.0-44-generic\n")
-            with patch("pathlib.Path.exists", return_value=True), patch(
-                "pathlib.Path.read_text",
-                return_value='ID=ubuntu\nNAME="Ubuntu"\nVERSION_ID="22.04"\nPRETTY_NAME="Ubuntu 22.04 LTS"\nVERSION_CODENAME=jammy\n',
-            ):
+        with patch("vulnscope.inventory.os_info.platform") as mock_platform:
+            mock_platform.system.return_value = "Linux"
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(
+                    returncode=0, stdout="6.5.0-44-generic\n"
+                )
+                with patch("pathlib.Path.exists", return_value=True), patch(
+                    "pathlib.Path.read_text",
+                    return_value='ID=ubuntu\nNAME="Ubuntu"\nVERSION_ID="22.04"\nPRETTY_NAME="Ubuntu 22.04 LTS"\nVERSION_CODENAME=jammy\n',
+                ):
+                    info = get_os_info()
+                    assert isinstance(info, OSInfo)
+                    assert info.id == "ubuntu"
+
+    def test_get_os_info_dispatches_to_macos(self):
+        with patch("vulnscope.inventory.os_info.platform") as mock_platform:
+            mock_platform.system.return_value = "Darwin"
+            mock_platform.mac_ver.return_value = ("15.3", ("", "", ""), "")
+            mock_platform.machine.return_value = "arm64"
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="24.3.0\n")
                 info = get_os_info()
-                assert isinstance(info, OSInfo)
-                assert info.id == "ubuntu"
+                assert info.id == "macos"
+                assert info.name == "macOS"
+                assert info.version == "15.3"
+                assert info.arch == "arm64"
+
+
+class TestMacOSInfo:
+    def test_basic_macos_detection(self):
+        with patch("vulnscope.inventory.os_info.platform") as mock_platform:
+            mock_platform.mac_ver.return_value = ("15.3", ("", "", ""), "")
+            mock_platform.machine.return_value = "arm64"
+            with patch("subprocess.run") as mock_run:
+                def run_side_effect(cmd, **kwargs):
+                    if cmd == ["uname", "-r"]:
+                        return MagicMock(returncode=0, stdout="24.3.0\n")
+                    if cmd == ["sw_vers", "-productVersionExtra"]:
+                        return MagicMock(returncode=1, stdout="")
+                    return MagicMock(returncode=1, stdout="")
+
+                mock_run.side_effect = run_side_effect
+                info = _get_macos_info()
+
+        assert info.id == "macos"
+        assert info.name == "macOS"
+        assert info.version == "15.3"
+        assert info.kernel_version == "24.3.0"
+        assert info.arch == "arm64"
+        assert info.pretty_name == "macOS 15.3"
+
+    def test_macos_with_codename(self):
+        with patch("vulnscope.inventory.os_info.platform") as mock_platform:
+            mock_platform.mac_ver.return_value = ("15.3", ("", "", ""), "")
+            mock_platform.machine.return_value = "arm64"
+            with patch("subprocess.run") as mock_run:
+                def run_side_effect(cmd, **kwargs):
+                    if cmd == ["uname", "-r"]:
+                        return MagicMock(returncode=0, stdout="24.3.0\n")
+                    if cmd == ["sw_vers", "-productVersionExtra"]:
+                        return MagicMock(returncode=0, stdout="(a)\n")
+                    return MagicMock(returncode=1, stdout="")
+
+                mock_run.side_effect = run_side_effect
+                info = _get_macos_info()
+
+        assert info.version_codename == "(a)"
+        assert info.pretty_name == "macOS 15.3 ((a))"
+
+    def test_macos_sw_vers_not_found(self):
+        with patch("vulnscope.inventory.os_info.platform") as mock_platform:
+            mock_platform.mac_ver.return_value = ("14.0", ("", "", ""), "")
+            mock_platform.machine.return_value = "x86_64"
+            with patch("subprocess.run") as mock_run:
+                def run_side_effect(cmd, **kwargs):
+                    if cmd == ["uname", "-r"]:
+                        return MagicMock(returncode=0, stdout="23.0.0\n")
+                    if cmd == ["sw_vers", "-productVersionExtra"]:
+                        raise FileNotFoundError
+                    return MagicMock(returncode=1, stdout="")
+
+                mock_run.side_effect = run_side_effect
+                info = _get_macos_info()
+
+        assert info.version_codename == ""
+        assert info.pretty_name == "macOS 14.0"
+        assert info.arch == "x86_64"
+
+    def test_macos_to_dict(self):
+        info = OSInfo(
+            id="macos",
+            name="macOS",
+            version="15.3",
+            version_codename="",
+            pretty_name="macOS 15.3",
+            kernel_version="24.3.0",
+            arch="arm64",
+        )
+        d = info.to_dict()
+        assert d["id"] == "macos"
+        assert d["name"] == "macOS"
+        assert d["version"] == "15.3"
 
 
 class TestDpkgCollector:

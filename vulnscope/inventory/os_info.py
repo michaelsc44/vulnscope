@@ -1,3 +1,4 @@
+import platform
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -5,13 +6,13 @@ from pathlib import Path
 
 @dataclass
 class OSInfo:
-    id: str  # "ubuntu", "debian", "fedora", "alpine"
-    name: str  # "Ubuntu"
-    version: str  # "22.04"
-    version_codename: str  # "jammy"
-    pretty_name: str  # "Ubuntu 22.04.4 LTS"
-    kernel_version: str  # "6.5.0-44-generic"
-    arch: str  # "x86_64"
+    id: str  # "ubuntu", "debian", "fedora", "alpine", "macos"
+    name: str  # "Ubuntu", "macOS"
+    version: str  # "22.04", "15.3"
+    version_codename: str  # "jammy", "Sequoia"
+    pretty_name: str  # "Ubuntu 22.04.4 LTS", "macOS 15.3"
+    kernel_version: str  # "6.5.0-44-generic", "24.3.0"
+    arch: str  # "x86_64", "arm64"
 
     def to_dict(self) -> dict:
         return {
@@ -37,7 +38,49 @@ def _parse_os_release(content: str) -> dict[str, str]:
     return result
 
 
-def get_os_info() -> OSInfo:
+def _get_macos_info() -> OSInfo:
+    version = platform.mac_ver()[0] or "unknown"
+    kernel_version = "unknown"
+    try:
+        result = subprocess.run(
+            ["uname", "-r"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            kernel_version = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    arch = platform.machine() or "unknown"
+
+    codename = ""
+    try:
+        result = subprocess.run(
+            ["sw_vers", "-productVersionExtra"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            codename = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    pretty_name = f"macOS {version}"
+    if codename:
+        pretty_name = f"macOS {version} ({codename})"
+
+    return OSInfo(
+        id="macos",
+        name="macOS",
+        version=version,
+        version_codename=codename,
+        pretty_name=pretty_name,
+        kernel_version=kernel_version,
+        arch=arch,
+    )
+
+
+def _get_linux_info() -> OSInfo:
     os_release: dict[str, str] = {}
 
     for path in ["/etc/os-release", "/usr/lib/os-release"]:
@@ -48,7 +91,9 @@ def get_os_info() -> OSInfo:
 
     kernel_version = "unknown"
     try:
-        result = subprocess.run(["uname", "-r"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["uname", "-r"], capture_output=True, text=True, timeout=5
+        )
         if result.returncode == 0:
             kernel_version = result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -56,7 +101,9 @@ def get_os_info() -> OSInfo:
 
     arch = "unknown"
     try:
-        result = subprocess.run(["uname", "-m"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["uname", "-m"], capture_output=True, text=True, timeout=5
+        )
         if result.returncode == 0:
             arch = result.stdout.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -71,3 +118,9 @@ def get_os_info() -> OSInfo:
         kernel_version=kernel_version,
         arch=arch,
     )
+
+
+def get_os_info() -> OSInfo:
+    if platform.system() == "Darwin":
+        return _get_macos_info()
+    return _get_linux_info()
