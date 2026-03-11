@@ -177,10 +177,12 @@ def inventory(ecosystem: tuple[str, ...]) -> None:
     multiple=True,
     help="Filter to specific ecosystem (deb, snap, flatpak, pypi, npm, cargo, brew)",
 )
-def fix(apply: bool, dry_run: bool, skip_reboot: bool, ecosystem: tuple[str, ...]) -> None:
+@click.option("--livepatch", is_flag=True, help="Use kernel livepatch instead of reboot for kernel CVEs")
+def fix(apply: bool, dry_run: bool, skip_reboot: bool, ecosystem: tuple[str, ...], livepatch: bool) -> None:
     """Auto-remediate vulnerabilities by updating packages."""
     from vulnscope.remediate import (
         apply_remediations,
+        build_livepatch_remediations,
         build_remediations,
         print_remediation_table,
         print_results_table,
@@ -202,6 +204,22 @@ def fix(apply: bool, dry_run: bool, skip_reboot: bool, ecosystem: tuple[str, ...
         sys.exit(2)
 
     remediations = build_remediations(result)
+
+    if livepatch:
+        from vulnscope.inventory.livepatch import detect_livepatch
+
+        lp_status = detect_livepatch()
+        if not lp_status.available:
+            click.echo("No livepatch system detected (canonical-livepatch or kpatch).", err=True)
+        elif not lp_status.enabled:
+            click.echo(f"Livepatch ({lp_status.backend}) is installed but not enabled.", err=True)
+        else:
+            click.echo(f"Livepatch ({lp_status.backend}) detected — using for kernel CVEs.")
+            lp_rems = build_livepatch_remediations(result, livepatch_status=lp_status)
+            if lp_rems:
+                lp_packages = {r.package for r in lp_rems}
+                remediations = [r for r in remediations if r.package not in lp_packages]
+                remediations.extend(lp_rems)
 
     if ecosystem:
         eco_set = set(ecosystem)
