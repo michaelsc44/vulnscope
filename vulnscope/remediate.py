@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 
+from vulnscope.inventory.livepatch import LivepatchStatus, detect_livepatch
 from vulnscope.models import ScanResult
 
 REBOOT_PACKAGES = frozenset({
@@ -85,6 +86,67 @@ def build_remediations(scan_result: ScanResult) -> list[Remediation]:
             update_command=cmd,
             requires_reboot=reboot,
             risk_level=_risk_level(pkg.ecosystem, reboot),
+        ))
+
+    return remediations
+
+
+KERNEL_PACKAGES = frozenset({
+    "linux-image",
+    "linux-headers",
+    "linux-generic",
+    "linux-base",
+    "kernel",
+    "kernel-core",
+    "kernel-modules",
+})
+
+
+def _is_kernel_package(package_name: str) -> bool:
+    name = package_name.lower()
+    return any(name == kp or name.startswith(kp + "-") for kp in KERNEL_PACKAGES)
+
+
+def build_livepatch_remediations(
+    scan_result: ScanResult,
+    *,
+    livepatch_status: LivepatchStatus | None = None,
+) -> list[Remediation]:
+    if livepatch_status is None:
+        livepatch_status = detect_livepatch()
+
+    if not livepatch_status.available or not livepatch_status.enabled:
+        return []
+
+    remediations: list[Remediation] = []
+    seen: set[str] = set()
+
+    for vuln in scan_result.vulnerabilities:
+        if not vuln.fixed_version:
+            continue
+
+        pkg = vuln.affected_package
+        if not _is_kernel_package(pkg.name):
+            continue
+
+        key = f"livepatch:{pkg.name}:{vuln.fixed_version}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        if livepatch_status.backend == "canonical-livepatch":
+            cmd = "sudo canonical-livepatch refresh"
+        else:
+            cmd = "sudo kpatch load"
+
+        remediations.append(Remediation(
+            package=pkg.name,
+            ecosystem=pkg.ecosystem,
+            current_version=pkg.version,
+            fixed_version=vuln.fixed_version,
+            update_command=cmd,
+            requires_reboot=False,
+            risk_level="safe",
         ))
 
     return remediations
