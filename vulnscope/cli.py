@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+import subprocess
 import sys
 import time
 
@@ -346,6 +347,29 @@ def _watch_loop(interval_minutes: int) -> None:
                 send_notification(new_vulns)
 
         time.sleep(interval_minutes * 60)
+
+
+@watch.command("install-service")
+@click.option("--start", is_flag=True, help="Also start the service immediately")
+def watch_install_service(start: bool) -> None:
+    """Install a systemd user service (or launchd plist on macOS)."""
+    from vulnscope.service import install_service
+
+    try:
+        msg = install_service(start=start)
+        click.echo(msg)
+    except subprocess.CalledProcessError as exc:
+        click.echo(f"Failed to install service: {exc}", err=True)
+        sys.exit(1)
+
+
+@watch.command("uninstall-service")
+def watch_uninstall_service() -> None:
+    """Remove the systemd user service (or launchd plist on macOS)."""
+    from vulnscope.service import uninstall_service
+
+    msg = uninstall_service()
+    click.echo(msg)
 
 
 @watch.command("stop")
