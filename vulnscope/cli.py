@@ -284,7 +284,8 @@ def _read_pid() -> int | None:
 @watch.command("start")
 @click.option("--interval", default=360, type=int, help="Scan interval in minutes (default: 360 = 6 hours)")
 @click.option("--foreground", is_flag=True, help="Run in foreground instead of daemonizing")
-def watch_start(interval: int, foreground: bool) -> None:
+@click.option("--auto-fix", is_flag=True, help="Automatically remediate new vulnerabilities (skip reboot-requiring updates)")
+def watch_start(interval: int, foreground: bool, auto_fix: bool) -> None:
     """Start periodic background scanning."""
     existing = _read_pid()
     if existing:
@@ -298,7 +299,10 @@ def watch_start(interval: int, foreground: bool) -> None:
             click.echo(f"Failed to daemonize: {exc}", err=True)
             sys.exit(1)
         if pid > 0:
-            click.echo(f"Watch daemon started (PID {pid}), scanning every {interval} minutes.")
+            msg = f"Watch daemon started (PID {pid}), scanning every {interval} minutes."
+            if auto_fix:
+                msg += " Auto-fix enabled."
+            click.echo(msg)
             return
         os.setsid()
         sys.stdin = open(os.devnull)
@@ -317,14 +321,14 @@ def watch_start(interval: int, foreground: bool) -> None:
     signal.signal(signal.SIGINT, _cleanup)
 
     try:
-        _watch_loop(interval)
+        _watch_loop(interval, auto_fix=auto_fix)
     finally:
         pf.unlink(missing_ok=True)
 
 
-def _watch_loop(interval_minutes: int) -> None:
+def _watch_loop(interval_minutes: int, *, auto_fix: bool = False) -> None:
     from vulnscope.notify import send_notification
-    from vulnscope.scan_store import diff_scans, load_latest_scan, save_scan
+    from vulnscope.scan_store import DATA_DIR, diff_scans, load_latest_scan, save_scan
     from vulnscope.scanner import run_scan
 
     raw_config = load_config()
@@ -345,7 +349,50 @@ def _watch_loop(interval_minutes: int) -> None:
             if new_vulns:
                 send_notification(new_vulns)
 
+                if auto_fix:
+                    _auto_fix_vulns(result, DATA_DIR)
+
         time.sleep(interval_minutes * 60)
+
+
+def _auto_fix_vulns(result: object, data_dir: object) -> None:
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from vulnscope.remediate import apply_remediations, build_remediations
+
+    remediations = build_remediations(result)  # type: ignore[arg-type]
+    remediations = [r for r in remediations if not r.requires_reboot]
+
+    if not remediations:
+        return
+
+    results = apply_remediations(remediations)
+
+    log_dir = Path(str(data_dir)) / "autofix_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    log_entry = {
+        "timestamp": ts,
+        "remediations_attempted": len(results),
+        "succeeded": sum(1 for r in results if r.success),
+        "failed": sum(1 for r in results if not r.success),
+        "details": [
+            {
+                "package": r.remediation.package,
+                "ecosystem": r.remediation.ecosystem,
+                "fixed_version": r.remediation.fixed_version,
+                "success": r.success,
+                "output": r.output[:200],
+            }
+            for r in results
+        ],
+    }
+
+    log_file = log_dir / f"autofix_{ts}.json"
+    log_file.write_text(json.dumps(log_entry, indent=2))
 
 
 @watch.command("stop")
